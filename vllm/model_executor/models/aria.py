@@ -21,7 +21,7 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.sampler import Sampler, SamplerOutput, SamplingMetadata
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear
+from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear, QKVParallelLinear
 from vllm.model_executor.models.interfaces import SupportsMultiModal
 from vllm.model_executor.models.llama import (
     LlamaAttention,
@@ -57,7 +57,7 @@ import torch.nn as nn
 from torch.nn.init import trunc_normal_
 from vllm.config import QuantizationConfig
 from vllm.model_executor.models.idefics2_vision_model import Idefics2VisionTransformer
-from vllm.transformers_utils.configs.aria import AriaVisionConfig
+from vllm.transformers_utils.configs.aria import AriaVisionConfig, AriaMoELMConfig
 from vllm.model_executor.layers.activation import get_act_fn
 
 
@@ -297,46 +297,6 @@ class AriaProjector(nn.Module):
         out = self.ffn(self.ln_ffn(attention_out))
 
         return out
-
-
-class AriaMoELMConfig(LlamaConfig):
-    """
-    Configuration class for AriaMoE language model.
-
-    This class extends the LlamaConfig to include additional parameters specific to the Mixture of Experts (MoE) architecture.
-    """
-
-    model_type = "aria_moe_lm"
-
-    def __init__(
-        self,
-        moe_intermediate_size: int = 4096,
-        moe_num_experts: int = 8,
-        moe_topk: int = 2,
-        moe_z_loss_coeff: float = 1e-5,
-        moe_aux_loss_coeff: float = 1e-3,
-        moe_num_shared_experts: int = 2,
-        **kwargs,
-    ):
-        """
-        Initialize the AriaMoELMConfig.
-
-        Args:
-            moe_intermediate_size (int): The intermediate size for MoE layers. Default is 4096.
-            moe_num_experts (int): The number of experts in the MoE layer. Default is 8.
-            moe_topk (int): The number of top experts to route to for each token. Default is 2.
-            moe_z_loss_coeff (float): The coefficient for the auxiliary z-loss. Default is 1e-5.
-            moe_aux_loss_coeff (float): The coefficient for the auxiliary load balancing loss. Default is 1e-3.
-            moe_num_shared_experts (int): The number of shared experts. Default is 2.
-            **kwargs: Additional keyword arguments to be passed to the parent LlamaConfig.
-        """
-        super().__init__(**kwargs)
-        self.moe_intermediate_size = moe_intermediate_size
-        self.moe_num_experts = moe_num_experts
-        self.moe_topk = moe_topk
-        self.moe_z_loss_coeff = moe_z_loss_coeff
-        self.moe_aux_loss_coeff = moe_aux_loss_coeff
-        self.moe_num_shared_experts = moe_num_shared_experts
 
 
 class Experts(nn.Module):
