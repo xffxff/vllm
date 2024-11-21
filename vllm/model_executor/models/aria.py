@@ -80,6 +80,7 @@ class IdentityOp(torch.nn.Module):
 
 
 class AriaVisionTransformer(Idefics2VisionTransformer):
+
     def __init__(
         self,
         config: AriaVisionConfig,
@@ -214,12 +215,16 @@ class CrossAttention(nn.Module):
         key = self.k_proj(x).permute(1, 0, 2)
         value = self.v_proj(x).permute(1, 0, 2)
 
-        attn_output, _ = self.multihead_attn(query, key, value, attn_mask=attn_mask)
+        attn_output, _ = self.multihead_attn(query,
+                                             key,
+                                             value,
+                                             attn_mask=attn_mask)
 
         attn_output = attn_output.permute(1, 0, 2)
 
         if add_residual:
-            attn_output = hidden_states + self.dropout(self.linear(attn_output))
+            attn_output = hidden_states + self.dropout(
+                self.linear(attn_output))
         else:
             attn_output = self.dropout(self.linear(attn_output))
 
@@ -260,8 +265,7 @@ class AriaProjector(nn.Module):
         self.num_heads = num_heads
 
         self.query = nn.Parameter(
-            torch.zeros(max(patch_to_query_dict.values()), self.embed_dim)
-        )
+            torch.zeros(max(patch_to_query_dict.values()), self.embed_dim))
 
         trunc_normal_(self.query, std=0.02)
 
@@ -296,9 +300,8 @@ class AriaProjector(nn.Module):
         queries = self.query.unsqueeze(0).repeat(bs, 1, 1)
 
         query_num = self.patch_to_query_dict.get(x.shape[1], None)
-        assert (
-            query_num is not None
-        ), f"Query number for {x.shape[1]} patches is not provided"
+        assert (query_num is not None
+                ), f"Query number for {x.shape[1]} patches is not provided"
 
         queries = queries[:, :query_num, :]
 
@@ -380,12 +383,16 @@ class CrossAttention(nn.Module):
         key = self.k_proj(x).permute(1, 0, 2)
         value = self.v_proj(x).permute(1, 0, 2)
 
-        attn_output, _ = self.multihead_attn(query, key, value, attn_mask=attn_mask)
+        attn_output, _ = self.multihead_attn(query,
+                                             key,
+                                             value,
+                                             attn_mask=attn_mask)
 
         attn_output = attn_output.permute(1, 0, 2)
 
         if add_residual:
-            attn_output = hidden_states + self.dropout(self.linear(attn_output))
+            attn_output = hidden_states + self.dropout(
+                self.linear(attn_output))
         else:
             attn_output = self.dropout(self.linear(attn_output))
 
@@ -426,8 +433,7 @@ class AriaProjector(nn.Module):
         self.num_heads = num_heads
 
         self.query = nn.Parameter(
-            torch.zeros(max(patch_to_query_dict.values()), self.embed_dim)
-        )
+            torch.zeros(max(patch_to_query_dict.values()), self.embed_dim))
 
         trunc_normal_(self.query, std=0.02)
 
@@ -462,9 +468,8 @@ class AriaProjector(nn.Module):
         queries = self.query.unsqueeze(0).repeat(bs, 1, 1)
 
         query_num = self.patch_to_query_dict.get(x.shape[1], None)
-        assert (
-            query_num is not None
-        ), f"Query number for {x.shape[1]} patches is not provided"
+        assert (query_num is not None
+                ), f"Query number for {x.shape[1]} patches is not provided"
 
         queries = queries[:, :query_num, :]
 
@@ -520,13 +525,14 @@ class AriaMoELMConfig(LlamaConfig):
 
 
 class Experts(nn.Module):
+
     def __init__(self, config: AriaMoELMConfig):
         super().__init__()
         self.config = config
 
         self.router_weight = nn.Parameter(
-            torch.empty((self.config.moe_num_experts, self.config.hidden_size))
-        )
+            torch.empty(
+                (self.config.moe_num_experts, self.config.hidden_size)))
 
         self.tp_size = get_tensor_model_parallel_world_size()
         self.tp_rank = get_tensor_model_parallel_rank()
@@ -536,62 +542,60 @@ class Experts(nn.Module):
             )
 
         self.w1 = nn.Parameter(
-            torch.empty(
-                (
-                    config.moe_num_experts,
-                    config.moe_intermediate_size * 2 // self.tp_size,
-                    config.hidden_size,
-                )
-            )
-        )
+            torch.empty((
+                config.moe_num_experts,
+                config.moe_intermediate_size * 2 // self.tp_size,
+                config.hidden_size,
+            )))
         self.w2 = nn.Parameter(
-            torch.empty(
-                (
-                    config.moe_num_experts,
-                    config.hidden_size,
-                    config.moe_intermediate_size // self.tp_size,
-                )
-            )
-        )
-        set_weight_attrs(
-            self.router_weight, {"weight_loader": self._weight_loader_for_router}
-        )
-        set_weight_attrs(self.w1, {"weight_loader": self._weight_loader_for_w1})
-        set_weight_attrs(self.w2, {"weight_loader": self._weight_loader_for_w2})
+            torch.empty((
+                config.moe_num_experts,
+                config.hidden_size,
+                config.moe_intermediate_size // self.tp_size,
+            )))
+        set_weight_attrs(self.router_weight,
+                         {"weight_loader": self._weight_loader_for_router})
+        set_weight_attrs(self.w1,
+                         {"weight_loader": self._weight_loader_for_w1})
+        set_weight_attrs(self.w2,
+                         {"weight_loader": self._weight_loader_for_w2})
 
-    def _weight_loader_for_router(
-        self, param: nn.Parameter, loaded_weight: torch.Tensor
-    ):
+    def _weight_loader_for_router(self, param: nn.Parameter,
+                                  loaded_weight: torch.Tensor):
         param.data.copy_(loaded_weight)
 
-    def _weight_loader_for_w1(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+    def _weight_loader_for_w1(self, param: nn.Parameter,
+                              loaded_weight: torch.Tensor):
         # the shape of loaded_weight is (num_experts, hidden_size, 2 * moe_intermediate_size)
         if self.tp_size > 1:
             up, gate = loaded_weight.chunk(2, dim=-1)
             up_current_rank = up.chunk(self.tp_size, dim=-1)[self.tp_rank]
             gate_current_rank = gate.chunk(self.tp_size, dim=-1)[self.tp_rank]
-            up_and_gate = torch.cat(
-                [up_current_rank, gate_current_rank], dim=-1
-            ).transpose(1, 2)
+            up_and_gate = torch.cat([up_current_rank, gate_current_rank],
+                                    dim=-1).transpose(1, 2)
             param.data.copy_(up_and_gate)
         else:
             param.data.copy_(loaded_weight.transpose(1, 2))
 
-    def _weight_loader_for_w2(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+    def _weight_loader_for_w2(self, param: nn.Parameter,
+                              loaded_weight: torch.Tensor):
         # the shape of loaded_weight is (num_experts, moe_intermediate_size, hidden_size)
         if self.tp_size > 1:
-            down_current_rank = loaded_weight.chunk(self.tp_size, dim=1)[self.tp_rank]
+            down_current_rank = loaded_weight.chunk(self.tp_size,
+                                                    dim=1)[self.tp_rank]
             param.data.copy_(down_current_rank.transpose(1, 2))
         else:
             param.data.copy_(loaded_weight.transpose(1, 2))
 
     def forward(self, hidden_states):
-        router_output = torch.nn.functional.linear(hidden_states, self.router_weight)
+        router_output = torch.nn.functional.linear(hidden_states,
+                                                   self.router_weight)
 
-        def custom_routing_function(hidden_states, router_output, topk, renormalize):
-            top_logits, top_indices = torch.topk(
-                router_output, k=self.config.moe_topk, dim=1
-            )
+        def custom_routing_function(hidden_states, router_output, topk,
+                                    renormalize):
+            top_logits, top_indices = torch.topk(router_output,
+                                                 k=self.config.moe_topk,
+                                                 dim=1)
             scores = torch.softmax(top_logits, dim=-1, dtype=torch.float32)
             return scores, top_indices.to(torch.int32)
 
@@ -608,7 +612,8 @@ class Experts(nn.Module):
             custom_routing_function=custom_routing_function,
         )
         final_hidden_states = final_hidden_states.view(hidden_states_shape)
-        final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
+        final_hidden_states = tensor_model_parallel_all_reduce(
+            final_hidden_states)
         return final_hidden_states
 
 
@@ -674,24 +679,21 @@ class MoEDecoderLayer(LlamaDecoderLayer):
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
         if rope_scaling is not None and getattr(
-            config, "original_max_position_embeddings", None
-        ):
+                config, "original_max_position_embeddings", None):
             rope_scaling["original_max_position_embeddings"] = (
-                config.original_max_position_embeddings
-            )
-        max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
+                config.original_max_position_embeddings)
+        max_position_embeddings = getattr(config, "max_position_embeddings",
+                                          8192)
         # Support abacusai/Smaug-72B-v0.1 with attention_bias
         # Support internlm/internlm-7b with bias
         attention_bias = getattr(config, "attention_bias", False) or getattr(
-            config, "bias", False
-        )
+            config, "bias", False)
         self.self_attn = LlamaAttention(
             config=config,
             hidden_size=self.hidden_size,
             num_heads=config.num_attention_heads,
-            num_kv_heads=getattr(
-                config, "num_key_value_heads", config.num_attention_heads
-            ),
+            num_kv_heads=getattr(config, "num_key_value_heads",
+                                 config.num_attention_heads),
             rope_theta=rope_theta,
             rope_scaling=rope_scaling,
             max_position_embeddings=max_position_embeddings,
@@ -700,11 +702,13 @@ class MoEDecoderLayer(LlamaDecoderLayer):
             cache_config=cache_config,
             prefix=f"{prefix}.self_attn",
         )
-        self.mlp = MoELayer(config, quant_config=quant_config, lora_config=lora_config)
-        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
+        self.mlp = MoELayer(config,
+                            quant_config=quant_config,
+                            lora_config=lora_config)
+        self.input_layernorm = RMSNorm(config.hidden_size,
+                                       eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size,
+                                                eps=config.rms_norm_eps)
 
 
 class AriaMoELMModel(LlamaModel):
@@ -757,9 +761,8 @@ def build_mm_projector(config):
     )
 
 
-def _select_best_resolution(
-    img_width: int, img_height: int, target_ratios: List[List[int]], patch_size: int
-):
+def _select_best_resolution(img_width: int, img_height: int,
+                            target_ratios: List[List[int]], patch_size: int):
     """
     Selects the best resolution from a list of possible resolutions based on the original size.
 
@@ -783,10 +786,8 @@ def _select_best_resolution(
         if ratio_diff < best_ratio_diff:
             best_ratio_diff = ratio_diff
             best_ratio_w, best_ratio_h = ratio[0], ratio[1]
-        elif (
-            ratio_diff == best_ratio_diff
-            and area > 0.5 * patch_size * patch_size * ratio[0] * ratio[1]
-        ):
+        elif (ratio_diff == best_ratio_diff
+              and area > 0.5 * patch_size * patch_size * ratio[0] * ratio[1]):
             best_ratio_w, best_ratio_h = ratio[0], ratio[1]
 
     return best_ratio_w, best_ratio_h
@@ -832,8 +833,7 @@ def split_image(
     """
     if split_image:
         ratio_width, ratio_height = _select_best_resolution(
-            image.width, image.height, split_ratio, patch_size
-        )
+            image.width, image.height, split_ratio, patch_size)
         resize_width = patch_size * ratio_width
         resize_height = patch_size * ratio_height
         blocks = ratio_width * ratio_height
@@ -870,21 +870,20 @@ def input_mapper_for_aria(ctx, data):
     The only different is we would like to support runtime max_image_size adjustment.
     """
     model_config = ctx.model_config
-    max_image_size = getattr(model_config.multimodal_config, "max_image_size", 980)
+    max_image_size = getattr(model_config.multimodal_config, "max_image_size",
+                             980)
 
     # PIL image
     if isinstance(data, Image.Image) or is_list_of(data, Image.Image):
         image_processor = cached_get_image_processor(
-            model_config.model, trust_remote_code=model_config.trust_remote_code
-        )
+            model_config.model,
+            trust_remote_code=model_config.trust_remote_code)
         if image_processor is None:
-            raise RuntimeError(
-                "No HuggingFace processor is available " "to process the image object"
-            )
+            raise RuntimeError("No HuggingFace processor is available "
+                               "to process the image object")
         try:
             batch_data = image_processor.preprocess(
-                data, max_image_size=max_image_size, return_tensors="pt"
-            ).data
+                data, max_image_size=max_image_size, return_tensors="pt").data
             batch_data.pop("num_crops")
         except Exception:
             logger.error("Failed to process image (%s)", data)
@@ -915,17 +914,15 @@ def input_processor(ctx, llm_inputs):
     _split_image = multi_modal_data.pop("split_image", False)
 
     assert isinstance(max_image_size, int) or isinstance(
-        max_image_size, float
-    ), "max_image_size should be float or int"
-    images = (
-        multi_modal_data["image"]
-        if isinstance(multi_modal_data["image"], list)
-        else [multi_modal_data["image"]]
-    )
+        max_image_size, float), "max_image_size should be float or int"
+    images = (multi_modal_data["image"] if isinstance(
+        multi_modal_data["image"], list) else [multi_modal_data["image"]])
     num_crops = []
     splitted_images = []
     for image in images:
-        splitted_image = split_image(image, _split_image, patch_size=max_image_size)
+        splitted_image = split_image(image,
+                                     _split_image,
+                                     patch_size=max_image_size)
         splitted_images.extend(splitted_image)
         num_crops.append(len(splitted_image))
     max_image_size = [max_image_size] * len(images)
@@ -938,11 +935,13 @@ def input_processor(ctx, llm_inputs):
         assert (
             image_size in hf_config.image_size2tokens
         ), f"Invalid image size: {image_size}, available options: {list(hf_config.image_size2tokens.keys())}"
-        image_feature_sizes.append(hf_config.image_size2tokens[image_size] * num_crop)
+        image_feature_sizes.append(hf_config.image_size2tokens[image_size] *
+                                   num_crop)
 
     # Set up the max_image_size and split_image in the RuntimeContext for the image processor
     # TODO: Supports dynamic image size support
-    setattr(model_config.multimodal_config, "max_image_size", max(max_image_size))
+    setattr(model_config.multimodal_config, "max_image_size",
+            max(max_image_size))
 
     new_prompt, new_token_ids, ranges = repeat_and_pad_placeholder_tokens(
         tokenizer,
@@ -997,9 +996,8 @@ class AriaForConditionalGeneration(nn.Module, SupportsMultiModal):
             vllm_config=vllm_config.with_hf_config(config.text_config),
             prefix=maybe_prefix(prefix, "language_model.model"),
         )
-        self.pad_token_id = (
-            self.config.pad_token_id if self.config.pad_token_id is not None else -1
-        )
+        self.pad_token_id = (self.config.pad_token_id
+                             if self.config.pad_token_id is not None else -1)
         self.unpadded_vocab_size = config.text_config.vocab_size
         self.lm_head = ParallelLMHead(
             self.unpadded_vocab_size,
@@ -1008,9 +1006,8 @@ class AriaForConditionalGeneration(nn.Module, SupportsMultiModal):
             quant_config=quant_config,
         )
         logit_scale = getattr(config, "logit_scale", 1.0)
-        self.logits_processor = LogitsProcessor(
-            self.unpadded_vocab_size, self.vocab_size, logit_scale
-        )
+        self.logits_processor = LogitsProcessor(self.unpadded_vocab_size,
+                                                self.vocab_size, logit_scale)
         self.sampler = Sampler()
 
     def forward(
@@ -1030,8 +1027,7 @@ class AriaForConditionalGeneration(nn.Module, SupportsMultiModal):
         # 2. Merge text and images
         if pixel_values is not None:
             pixel_values = pixel_values.view(-1, *pixel_values.shape[-3:]).to(
-                torch.bfloat16
-            )
+                torch.bfloat16)
             pixel_mask = pixel_mask.view(-1, *pixel_mask.shape[-2:])
             selected_image_feature, image_attn_mask = self.vision_tower(
                 pixel_values,
@@ -1039,13 +1035,12 @@ class AriaForConditionalGeneration(nn.Module, SupportsMultiModal):
             )
 
             image_features = self.multi_modal_projector(
-                selected_image_feature, attn_mask=image_attn_mask
-            )
+                selected_image_feature, attn_mask=image_attn_mask)
 
             inputs_embeds = inputs_embeds.to(image_features.dtype)
             inputs_embeds = merge_multimodal_embeddings(
-                input_ids, inputs_embeds, image_features, self.config.image_token_index
-            )
+                input_ids, inputs_embeds, image_features,
+                self.config.image_token_index)
 
         hidden_states = self.language_model(
             input_ids,
@@ -1058,10 +1053,10 @@ class AriaForConditionalGeneration(nn.Module, SupportsMultiModal):
 
         return hidden_states
 
-    def compute_logits(
-        self, hidden_states: torch.Tensor, sampling_metadata: SamplingMetadata
-    ) -> torch.Tensor:
-        logits = self.logits_processor(self.lm_head, hidden_states, sampling_metadata)
+    def compute_logits(self, hidden_states: torch.Tensor,
+                       sampling_metadata: SamplingMetadata) -> torch.Tensor:
+        logits = self.logits_processor(self.lm_head, hidden_states,
+                                       sampling_metadata)
         return logits
 
     def sample(
