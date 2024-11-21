@@ -1,5 +1,5 @@
 import math
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple, Set
 
 import torch
 import torch.nn as nn
@@ -16,10 +16,11 @@ from vllm.inputs import INPUT_REGISTRY, token_inputs
 from vllm.model_executor.layers.fused_moe import fused_moe
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
-from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
-from vllm.model_executor.layers.sampler import Sampler, SamplerOutput, SamplingMetadata
+from vllm.model_executor.layers.quantization import QuantizationConfig
+from vllm.model_executor.layers.sampler import SamplerOutput, Sampler
+from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear
+from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear, MergedColumnParallelLinear
 from vllm.model_executor.models.interfaces import SupportsMultiModal
 from vllm.model_executor.models.llama import (
     LlamaAttention,
@@ -160,12 +161,11 @@ class CrossAttention(nn.Module):
     def __init__(self, kv_dim, embed_dim, num_heads, drop_out_rate=0):
         super().__init__()
         self.num_heads = num_heads
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-        self.k_proj = nn.Linear(kv_dim, embed_dim, bias=False)
-        self.v_proj = nn.Linear(kv_dim, embed_dim, bias=False)
+        self.q_proj = ColumnParallelLinear(embed_dim, embed_dim, bias=False)
+        self.kv_proj = MergedColumnParallelLinear(kv_dim, [embed_dim, embed_dim], bias=False)
 
         self.multihead_attn = nn.MultiheadAttention(embed_dim, num_heads)
-        self.linear = nn.Linear(embed_dim, embed_dim)
+        self.linear = RowParallelLinear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(drop_out_rate)
 
         self.layer_norm = nn.LayerNorm(embed_dim)
@@ -185,11 +185,11 @@ class CrossAttention(nn.Module):
             torch.Tensor: Output tensor after cross-attention.
         """
         normed_hidden_states = self.layer_norm(hidden_states)
-        query = self.q_proj(normed_hidden_states).permute(1, 0, 2)
+        query = self.q_proj(normed_hidden_states)[0].permute(1, 0, 2)
 
         x = self.ln_kv(x)
-        key = self.k_proj(x).permute(1, 0, 2)
-        value = self.v_proj(x).permute(1, 0, 2)
+        key_value = self.kv_proj(x)[0].permute(1, 0, 2)
+        key, value = key_value.chunk(2, dim=-1)
 
         attn_output, _ = self.multihead_attn(query,
                                              key,
@@ -200,9 +200,9 @@ class CrossAttention(nn.Module):
 
         if add_residual:
             attn_output = hidden_states + self.dropout(
-                self.linear(attn_output))
+                self.linear(attn_output)[0])
         else:
-            attn_output = self.dropout(self.linear(attn_output))
+            attn_output = self.dropout(self.linear(attn_output)[0])
 
         return attn_output
 
@@ -290,6 +290,27 @@ class AriaProjector(nn.Module):
         out = self.ffn(self.ln_ffn(attention_out))
 
         return out
+    
+    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]) -> Set[str]:
+        stacked_params_mapping = [
+            # (param_name, shard_name, shard_id)
+            (".kv_proj", ".k_proj", 0),
+            (".kv_proj", ".v_proj", 1),
+        ]
+        params_dict = dict(self.named_parameters())
+        loaded_params: Set[str] = set()
+        for name, loaded_weight in weights:
+            for param_name, weight_name, shard_id in stacked_params_mapping:
+                if weight_name not in name:
+                    continue
+                name = name.replace(weight_name, param_name)
+                param = params_dict[name]
+                weight_loader = param.weight_loader
+                weight_loader(param, loaded_weight, shard_id)
+                break
+            loaded_params.add(name)
+        return loaded_params
+
 
 
 class Experts(nn.Module):
@@ -642,7 +663,6 @@ class AriaForConditionalGeneration(nn.Module, SupportsMultiModal):
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
 
-        # prepare the image_size to tokens mapping for the image preprocess, see input_processor
         config.image_size2tokens = {
             int(math.sqrt(k) * config.vision_config.patch_size): v
             for k, v in config.projector_patch_to_query_dict.items()
