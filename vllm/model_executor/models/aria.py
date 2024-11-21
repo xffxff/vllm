@@ -21,6 +21,7 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.sampler import Sampler, SamplerOutput, SamplingMetadata
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear
 from vllm.model_executor.models.interfaces import SupportsMultiModal
 from vllm.model_executor.models.llama import (
     LlamaAttention,
@@ -54,29 +55,10 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 from torch.nn.init import trunc_normal_
-from transformers.activations import ACT2FN
-from transformers.models.idefics2.configuration_idefics2 import Idefics2VisionConfig
 from vllm.config import QuantizationConfig
 from vllm.model_executor.models.idefics2_vision_model import Idefics2VisionTransformer
-
-
-class AriaVisionConfig(Idefics2VisionConfig):
-    model_type = "aria_vision_model"
-
-
-class IdentityOp(torch.nn.Module):
-    """
-    An identity operation that returns the input unchanged.
-
-    This can be used as a placeholder or to maintain architectural consistency
-    when a specific operation is not needed.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-    def forward(self, x, *args, **kwargs):
-        return x
+from vllm.transformers_utils.configs.aria import AriaVisionConfig
+from vllm.model_executor.layers.activation import get_act_fn
 
 
 class AriaVisionTransformer(Idefics2VisionTransformer):
@@ -88,7 +70,7 @@ class AriaVisionTransformer(Idefics2VisionTransformer):
         prefix: str = "",
     ) -> None:
         super().__init__(config, quant_config, prefix)
-        self.post_layernorm = IdentityOp()
+        self.post_layernorm = nn.Identity()
 
 
 class AriaVisionModel(nn.Module):
@@ -160,13 +142,14 @@ class FFN(nn.Module):
 
     def __init__(self, embed_dim, ff_dim, output_dim):
         super().__init__()
-        self.linear_in = nn.Linear(embed_dim, ff_dim, bias=False)
-        self.linear_out = nn.Linear(ff_dim, output_dim, bias=False)
-        self.act = ACT2FN["gelu_new"]
+        self.linear_in = ColumnParallelLinear(embed_dim, ff_dim, bias=False)
+        self.linear_out = RowParallelLinear(ff_dim, output_dim, bias=False)
+        self.act = get_act_fn("gelu_new")
 
     def forward(self, hidden_states):
-        hidden_states = self.act(self.linear_in(hidden_states))
-        hidden_states = self.linear_out(hidden_states)
+        hidden_states, _ = self.linear_in(hidden_states)
+        hidden_states = self.act(hidden_states)
+        hidden_states, _ = self.linear_out(hidden_states)
         return hidden_states
 
 
